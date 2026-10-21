@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Completion reminders",
+    "description": "Posts a desktop notification when a session finishes a turn, filtered by how it ended."
+  }
+}
