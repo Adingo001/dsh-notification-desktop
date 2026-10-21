@@ -14,7 +14,7 @@
 
 | 上游 | 0.2.x 适配 |
 | --- | --- |
-| `dsh.client.inject` 列 `dsh-client-runtime` / `dsh-client-store` / `dsh-client-ui-slots` / `dsh-client-ui-settings` / `dsh-client-locale` | 换成 0.2.x 真实包 id：`dsh-client-locale` / `dsh-client-ui-slots` / `dsh-client-ui-settings` |
+| `dsh.client.inject` 列 `dsh-client-runtime` / `dsh-client-store` / `dsh-client-ui-slots` / `dsh-client-ui-settings` / `dsh-client-locale` | 改成 `inject: []`：`dsh-client-runtime` 在 0.2.x 里根本不存在，而顺序已经由服务 `inject: ['slots','locale']` 和 `ctx.slots.inject()` 表达；少列一个不存在的 id 就少一个模块永远等不到依赖的风险 |
 | `ctx.get('sessions').list.getSnapshot()` 取 `{ ids, byId, current }` | 0.2.x 快照是 `{ ids, byId, phase, projectionsBySession }`，行内是 `projectionValues` / `displayTitle` / `retainedBy` |
 | 用 `state.current` 判断「正在看的会话」 | 改读 `row.retainedBy.mainView > 0`（0.2.x 的 retention 才是权威） |
 | `uiSession.pendingInteractions` 做「等你审批/回答」提醒 | **未移植**：0.2.x 的 `pendingInteraction` 只在 `ui-session` 的 Slot hook 里（`sessionStatus`），不是可订阅的根服务；只做完成边。 |
