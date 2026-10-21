@@ -64,6 +64,8 @@ window.__ModuleLoader__.load({
       emptyBody: '（这轮没有文字回复）',
       untitled: '未命名会话',
       bodyOf: '{title}',
+      aumidHint:
+        'Windows 上没通知时：先跑一次 scripts/fix-toast-aumid.ps1 注册 AppUserModelID —— 桌面壳没有设置它，toast 会被系统静默丢弃。',
     }
 
     const en = {
@@ -100,6 +102,8 @@ window.__ModuleLoader__.load({
       emptyBody: '(this turn had no text reply)',
       untitled: 'Untitled session',
       bodyOf: '{title}',
+      aumidHint:
+        'On Windows, if nothing appears: run scripts/fix-toast-aumid.ps1 once to register the AppUserModelID the shell never sets — without it the toast is dropped silently.',
     }
 
     // ─── settings store ────────────────────────────────────────────────────
@@ -248,6 +252,26 @@ window.__ModuleLoader__.load({
 
     // ─── the completion runner ─────────────────────────────────────────────
 
+    /** Where the browser half reports what it decided; read back over HTTP. */
+    const TRACE_URL = '/dsh-notification-desktop/trace'
+
+    /**
+     * Report one decision to the host trace ring. Fire-and-forget: a failed
+     * report must never affect notification behaviour.
+     * @param {object} record - the record to append.
+     */
+    function report(record) {
+      try {
+        fetch(TRACE_URL, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ at: new Date().toISOString(), ...record }),
+        }).catch(() => {})
+      } catch {
+        /* reporting is best effort */
+      }
+    }
+
     /**
      * Subscribe to the session list and notify when a session's `notification`
      * projection turn rises past the last observed turn. The first observation
@@ -259,8 +283,23 @@ window.__ModuleLoader__.load({
       const list = sessions !== undefined && sessions !== null ? sessions.list : undefined
       if (list === undefined || typeof list.subscribe !== 'function' || typeof list.getSnapshot !== 'function') {
         console.warn('[dsh-notification-desktop] ctx.sessions.list is unavailable; completion reminders stay off')
+        report({
+          kind: 'apply',
+          stage: 'no-session-list',
+          hasGet: typeof ctx.get === 'function',
+          hasSessions: sessions !== undefined && sessions !== null,
+          keys: sessions !== undefined && sessions !== null ? Object.keys(sessions) : [],
+          permission: currentPermission(),
+        })
         return () => {}
       }
+      report({
+        kind: 'apply',
+        stage: 'runner-started',
+        permission: currentPermission(),
+        supported: typeof Notification !== 'undefined',
+        hidden: typeof document !== 'undefined' ? document.hidden : null,
+      })
 
       const observed = new Map()
 
@@ -269,6 +308,7 @@ window.__ModuleLoader__.load({
         observed.clear()
         if (state === undefined || !Array.isArray(state.ids)) return
         for (const id of state.ids) observed.set(id, turnOf(state.byId?.[id]))
+        report({ kind: 'seed', phase: state.phase, ids: state.ids.length, baselines: [...observed.entries()] })
       }
 
       const fire = (api, row, projection, settings) => {
@@ -279,21 +319,28 @@ window.__ModuleLoader__.load({
         const tag = tagOf(row.id, projection.turn)
         const deliver = () => {
           const result = show(api, title, subtitle === '' ? body : `${subtitle}\n${body}`, tag, settings.requireInteraction)
+          report({ kind: 'deliver', ok: result.ok, message: result.ok ? '' : result.message, tag, title, turn: projection.turn })
           if (!result.ok) console.error(`[dsh-notification-desktop] notification failed: ${result.message}`)
         }
         if (api.permission === 'granted') deliver()
         else if (api.permission === 'default') {
           api.requestPermission().then(status => {
+            report({ kind: 'permission-request', status })
             if (status === 'granted') deliver()
           })
+        } else {
+          report({ kind: 'deliver', ok: false, message: `permission=${api.permission}`, turn: projection.turn })
         }
       }
 
+      let ticks = 0
       const run = () => {
         const state = list.getSnapshot()
         if (state === undefined || !Array.isArray(state.ids)) return
+        ticks += 1
         const settings = store.get()
         const api = notificationApi()
+        const changed = []
         for (const id of state.ids) {
           const row = state.byId?.[id]
           if (row === undefined || row === null) continue
@@ -301,13 +348,66 @@ window.__ModuleLoader__.load({
           const turn = turnOf(row)
           const previous = observed.get(id)
           observed.set(id, turn)
+          if (previous !== undefined && turn !== previous) changed.push({ id, from: previous, to: turn })
           if (previous === undefined || turn <= previous) continue
-          if (!settings.enabled || api === undefined) continue
-          if (projection === undefined || projection === null) continue
+          if (!settings.enabled) {
+            report({ kind: 'skip', id, turn, previous, skip: 'disabled' })
+            continue
+          }
+          if (api === undefined) {
+            report({ kind: 'skip', id, turn, previous, skip: 'no-api' })
+            continue
+          }
+          if (projection === undefined || projection === null) {
+            report({ kind: 'skip', id, turn, previous, skip: 'no-projection' })
+            continue
+          }
           const flag = REASON_FLAG[projection.reason]
-          if (flag === undefined || settings[flag] !== true) continue
-          if (settings.backgroundOnly && !document.hidden && isMainView(row)) continue
+          if (flag === undefined) {
+            report({ kind: 'skip', id, turn, previous, skip: 'reason-not-mapped', reason: projection.reason })
+            continue
+          }
+          if (settings[flag] !== true) {
+            report({ kind: 'skip', id, turn, previous, skip: 'reason-off', reason: projection.reason })
+            continue
+          }
+          if (settings.backgroundOnly && !document.hidden && isMainView(row)) {
+            report({ kind: 'skip', id, turn, previous, skip: 'background-only', hidden: document.hidden, main: isMainView(row) })
+            continue
+          }
+          report({
+            kind: 'fire',
+            id,
+            turn,
+            previous,
+            reason: projection.reason,
+            hidden: document.hidden,
+            main: isMainView(row),
+            permission: api === undefined ? 'no-api' : api.permission,
+          })
           fire(api, row, projection, settings)
+        }
+        // Bounded observation: the first few list updates plus every turn
+        // change. This is what tells a silent plugin whether the list moves at
+        // all and whether the rows carry the projection key.
+        if (ticks <= 4 || changed.length > 0) {
+          report({
+            kind: 'tick',
+            n: ticks,
+            phase: state.phase,
+            ids: state.ids.length,
+            changed,
+            hidden: typeof document === 'undefined' ? null : document.hidden,
+            rows: state.ids.slice(0, 3).map(id => {
+              const row = state.byId?.[id]
+              return {
+                id: String(id).slice(-8),
+                keys: Object.keys(row?.projectionValues ?? {}),
+                turn: turnOf(row),
+                main: isMainView(row),
+              }
+            }),
+          })
         }
         const live = new Set(state.ids)
         for (const id of [...observed.keys()]) if (!live.has(id)) observed.delete(id)
@@ -453,6 +553,7 @@ window.__ModuleLoader__.load({
             ),
           ),
           note === '' ? null : h('span', { className: 'dsh-ntf-status' }, note),
+          h('span', { className: 'dsh-ntf-hint' }, t('aumidHint')),
         ),
         h(
           'div',

@@ -17,6 +17,13 @@
  * checkout without installing its dependencies.
  */
 
+import { appendFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+/** Where the browser half's reports are mirrored for out-of-band diagnosis. */
+const TRACE_FILE = join(tmpdir(), 'dsh-notification-trace.log')
+
 /** Cordis plugin name — also the client bundle id. */
 export const name = 'dsh-notification-desktop'
 
@@ -25,6 +32,28 @@ export const inject = ['sessionProjections']
 
 /** Character budget for the projection body, enforced host-side. */
 const MAX_BODY_CHARS = 400
+
+/**
+ * Trace ring: the browser half reports each gating decision here, so a silent
+ * plugin can be diagnosed without opening DevTools. Bounded, in memory, and
+ * mirrored to a temp file so a host restart does not lose the last session.
+ */
+const TRACE_LIMIT = 200
+const trace = []
+
+/**
+ * Append one browser report and mirror it to the trace file.
+ * @param {unknown} record - one client-side trace record.
+ */
+function recordTrace(record) {
+  trace.push(record)
+  if (trace.length > TRACE_LIMIT) trace.splice(0, trace.length - TRACE_LIMIT)
+  try {
+    appendFileSync(TRACE_FILE, `${JSON.stringify(record)}\n`, 'utf8')
+  } catch {
+    /* the in-memory ring is enough */
+  }
+}
 
 /** The empty-log view: a session with no completed turn yet. */
 const EMPTY_VIEW = Object.freeze({ turn: 0, reason: '', body: '', tools: Object.freeze([]) })
@@ -150,4 +179,57 @@ export function apply(ctx) {
       }),
     'dsh-notification-desktop: notification projection',
   )
+
+  ctx.inject(['webServer'], host => {
+    host.effect(
+      () =>
+        host.webServer.register({
+          path: '/dsh-notification-desktop/trace',
+          handler: async (request, response) => {
+            const headers = {
+              'access-control-allow-origin': '*',
+              'access-control-allow-methods': 'GET, POST, DELETE, OPTIONS',
+              'access-control-allow-headers': 'content-type',
+              'cache-control': 'no-store',
+            }
+            if (request.method === 'OPTIONS') {
+              response.writeHead(204, headers)
+              response.end()
+              return
+            }
+            if (request.method === 'POST') {
+              try {
+                let body = ''
+                for await (const chunk of request) {
+                  body += chunk
+                  if (body.length > 64 * 1024) throw new Error('body too large')
+                }
+                const trimmed = body.trim()
+                if (trimmed !== '') recordTrace(JSON.parse(trimmed))
+                response.writeHead(204, headers)
+                response.end()
+              } catch (error) {
+                response.writeHead(400, { ...headers, 'content-type': 'application/json' })
+                response.end(JSON.stringify({ ok: false, error: String((error && error.message) || error) }))
+              }
+              return
+            }
+            if (request.method === 'DELETE') {
+              trace.length = 0
+              response.writeHead(204, headers)
+              response.end()
+              return
+            }
+            if (request.method === 'GET') {
+              response.writeHead(200, { ...headers, 'content-type': 'application/json' })
+              response.end(JSON.stringify({ ok: true, file: TRACE_FILE, count: trace.length, entries: trace }))
+              return
+            }
+            response.writeHead(405, headers)
+            response.end()
+          },
+        }),
+      'dsh-notification-desktop: trace route',
+    )
+  })
 }
