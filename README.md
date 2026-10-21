@@ -47,6 +47,18 @@ dsh plugin --profile desktop add https://github.com/<owner>/dsh-notification-des
 - 需要页面在跑：通知由页面里的 `Notification` 发出，页面关了就没有。
 - `turn/end` 的 `forked` / `interrupted` 也会推进投影的 `turn`（这样客户端去重不会漏轮），但默认只在 `completed` / `error` 上弹。
 
+## 验证
+
+`tests/client-harness.mjs` 用一个假模块加载器 + 假 React + 假 cordis ctx + 假 `Notification` 跑完整个客户端半边：模块 id、导出、locale 字典、`settings.section` 注册、设置页渲染（并检查没有漏翻的 key），以及通知闸门（首帧播种、后台限制、原因过滤、`forked` 跳过、总开关、权限拒绝）。
+
+```powershell
+# 没有 node 在 PATH 上时，用 Harness 自己的 Electron 当 node
+$env:ELECTRON_RUN_AS_NODE = 1
+& "D:\ai\DeepSeek Harness.exe" .\tests\client-harness.mjs
+```
+
+Host 侧的投影折叠（累积文本、工具去重、正文截断、turn 单调推进）另有同款 node 直跑测试覆盖。
+
 ## 许可
 
 MIT。上游 0.1.4 也是 MIT，本包为其 0.2.x 移植。
