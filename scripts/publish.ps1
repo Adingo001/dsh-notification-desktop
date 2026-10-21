@@ -57,8 +57,8 @@ try {
         commit -q -m 'dsh-notification-desktop 0.2.0: 0.2.x port of dsh-notification'
   }
   $remote = "https://x-access-token:$token@github.com/$Owner/$Name.git"
-  $existing = git remote get-url origin 2>$null
-  if ($existing) { git remote set-url origin $remote } else { git remote add origin $remote }
+  $remotes = @(git remote)
+  if ($remotes -contains 'origin') { git remote set-url origin $remote } else { git remote add origin $remote }
   git push -q -u origin HEAD:main
   git remote set-url origin "https://github.com/$Owner/$Name.git"
 } finally {
