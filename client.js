@@ -255,6 +255,30 @@ window.__ModuleLoader__.load({
     /** Where the browser half reports what it decided; read back over HTTP. */
     const TRACE_URL = '/dsh-notification-desktop/trace'
 
+    /** Where the browser half asks the host to show a real Windows toast. */
+    const NOTIFY_URL = '/dsh-notification-desktop/notify'
+
+    /** True inside the Electron desktop shell, whose toast path needs the host. */
+    function isDesktopShell() {
+      return typeof navigator !== 'undefined' && /electron/i.test(navigator.userAgent || '')
+    }
+
+    /**
+     * Ask the host half to show one toast. Fire-and-forget.
+     * @param {{ title: string, body: string, tag: string, turn: number }} payload
+     */
+    function pushToast(payload) {
+      try {
+        fetch(NOTIFY_URL, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+        }).catch(() => {})
+      } catch {
+        /* the host route is a best-effort delivery channel */
+      }
+    }
+
     /**
      * Report one decision to the host trace ring. Fire-and-forget: a failed
      * report must never affect notification behaviour.
@@ -317,10 +341,30 @@ window.__ModuleLoader__.load({
         const body = clampBody(projection.body, limit) || t('emptyBody')
         const subtitle = sessionTitleOf(row, t)
         const tag = tagOf(row.id, projection.turn)
+        const text = subtitle === '' ? body : `${subtitle}\n${body}`
         const deliver = () => {
-          const result = show(api, title, subtitle === '' ? body : `${subtitle}\n${body}`, tag, settings.requireInteraction)
-          report({ kind: 'deliver', ok: result.ok, message: result.ok ? '' : result.message, tag, title, turn: projection.turn })
+          if (isDesktopShell()) {
+            // On the desktop shell Chromium's Windows presenter reports success
+            // and Windows drops the toast, so the host shows it instead.
+            pushToast({ title, body: text, tag, turn: projection.turn })
+            report({ kind: 'deliver', ok: true, via: 'host', tag, title, turn: projection.turn })
+            return
+          }
+          const result = show(api, title, text, tag, settings.requireInteraction)
+          report({
+            kind: 'deliver',
+            ok: result.ok,
+            via: 'notification',
+            message: result.ok ? '' : result.message,
+            tag,
+            title,
+            turn: projection.turn,
+          })
           if (!result.ok) console.error(`[dsh-notification-desktop] notification failed: ${result.message}`)
+        }
+        if (isDesktopShell()) {
+          deliver()
+          return
         }
         if (api.permission === 'granted') deliver()
         else if (api.permission === 'default') {
@@ -354,7 +398,7 @@ window.__ModuleLoader__.load({
             report({ kind: 'skip', id, turn, previous, skip: 'disabled' })
             continue
           }
-          if (api === undefined) {
+          if (api === undefined && !isDesktopShell()) {
             report({ kind: 'skip', id, turn, previous, skip: 'no-api' })
             continue
           }
@@ -492,6 +536,16 @@ window.__ModuleLoader__.load({
       }, [])
 
       const sendTest = useCallback(() => {
+        if (isDesktopShell()) {
+          pushToast({
+            title: t('titleTest'),
+            body: 'dsh-notification-desktop',
+            tag: `dsh-notification-test-${Date.now()}`,
+            turn: 0,
+          })
+          setNote(t('okShow'))
+          return
+        }
         const api = notificationApi()
         const result = show(api, t('titleTest'), 'dsh-notification-desktop', `dsh-notification-test-${Date.now()}`, false)
         setPermission(currentPermission())

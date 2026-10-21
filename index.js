@@ -17,12 +17,24 @@
  * checkout without installing its dependencies.
  */
 
-import { appendFileSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { appendFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 /** Where the browser half's reports are mirrored for out-of-band diagnosis. */
 const TRACE_FILE = join(tmpdir(), 'dsh-notification-trace.log')
+
+/**
+ * The AppUserModelID Windows attributes toasts to. Electron's desktop shell
+ * never calls `app.setAppUserModelId`, so Chromium falls back to this value; the
+ * tray registration this value needs is created by `scripts/fix-toast-aumid.ps1`.
+ */
+const AUMID = 'electron.app.DeepSeek Harness'
+
+/** The ASCII-only Windows toast helper this host half spawns. */
+const TOAST_SCRIPT = fileURLToPath(new URL('./scripts/toast.ps1', import.meta.url))
 
 /** Cordis plugin name — also the client bundle id. */
 export const name = 'dsh-notification-desktop'
@@ -159,6 +171,58 @@ export function reduce(state, event) {
 }
 
 /**
+ * Show one Windows toast through the WinRT API, out of band from the page.
+ *
+ * The renderer `Notification` API is not trustworthy on this shell: Chromium's
+ * Windows presenter constructs the toast, reports success, and Windows drops it
+ * (see README). A direct WinRT toast under the same AppUserModelID does display,
+ * so the desktop route goes through here. The helper script is ASCII-only and
+ * reads its text from a UTF-8 JSON file, which keeps non-ASCII copy intact.
+ * @param {{ title?: unknown, body?: unknown, turn?: unknown }} payload - toast content.
+ */
+function showToast(payload) {
+  if (process.platform !== 'win32') {
+    recordTrace({ kind: 'host-notify-skip', reason: 'not-windows' })
+    return
+  }
+  const file = join(tmpdir(), `dsh-notification-toast-${process.pid}-${Date.now()}.json`)
+  try {
+    writeFileSync(
+      file,
+      JSON.stringify({ aumid: AUMID, title: String(payload.title ?? ''), body: String(payload.body ?? '') }),
+      'utf8',
+    )
+  } catch (error) {
+    recordTrace({ kind: 'host-notify-error', stage: 'write', message: String((error && error.message) || error) })
+    return
+  }
+  try {
+    const child = spawn(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', TOAST_SCRIPT, file],
+      { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
+    )
+    // Capture the helper's output: a toast that silently fails is otherwise
+    // indistinguishable from one that displayed.
+    let output = ''
+    const collect = chunk => {
+      output += chunk
+      if (output.length > 4000) output = output.slice(-4000)
+    }
+    child.stdout.on('data', collect)
+    child.stderr.on('data', collect)
+    child.on('error', error => {
+      recordTrace({ kind: 'host-notify-error', stage: 'spawn', message: String((error && error.message) || error) })
+    })
+    child.on('close', code => {
+      recordTrace({ kind: 'host-notify-result', code, output: output.trim() })
+    })
+  } catch (error) {
+    recordTrace({ kind: 'host-notify-error', stage: 'spawn', message: String((error && error.message) || error) })
+  }
+}
+
+/**
  * Register the `notification` projection unit. The registration is an effect on
  * this plugin's fiber, so unloading removes the key.
  * @param {import('@deepseek-ai/cordis').Context} ctx - host cordis context.
@@ -230,6 +294,47 @@ export function apply(ctx) {
           },
         }),
       'dsh-notification-desktop: trace route',
+    )
+
+    host.effect(
+      () =>
+        host.webServer.register({
+          path: '/dsh-notification-desktop/notify',
+          handler: async (request, response) => {
+            const headers = {
+              'access-control-allow-origin': '*',
+              'access-control-allow-methods': 'POST, OPTIONS',
+              'access-control-allow-headers': 'content-type',
+              'cache-control': 'no-store',
+            }
+            if (request.method === 'OPTIONS') {
+              response.writeHead(204, headers)
+              response.end()
+              return
+            }
+            if (request.method !== 'POST') {
+              response.writeHead(405, headers)
+              response.end()
+              return
+            }
+            try {
+              let body = ''
+              for await (const chunk of request) {
+                body += chunk
+                if (body.length > 64 * 1024) throw new Error('body too large')
+              }
+              const payload = JSON.parse(body.trim() === '' ? '{}' : body)
+              showToast(payload)
+              recordTrace({ kind: 'host-notify', title: payload.title, turn: payload.turn })
+              response.writeHead(204, headers)
+              response.end()
+            } catch (error) {
+              response.writeHead(400, { ...headers, 'content-type': 'application/json' })
+              response.end(JSON.stringify({ ok: false, error: String((error && error.message) || error) }))
+            }
+          },
+        }),
+      'dsh-notification-desktop: notify route',
     )
   })
 }

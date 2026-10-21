@@ -4,9 +4,9 @@
 
 ## 它做什么
 
-- Host 半边注册一个 `notification` 会话投影：折叠每个会话的最后一次 `turn/end`，得到 `{ turn, reason, body, tools }`。
-- Client 半边盯住 `ctx.sessions.list` 里这个投影的 `turn` 单调上升，弹一条浏览器系统通知；正文是该轮最后一段助手回复（Host 侧截到 400 字符，Client 侧再按设置截一次）。
-- 设置页在 **设置 → 完成提醒**：总开关、按结束原因过滤、仅后台提醒、通知常驻、正文长度、权限状态 + 请求权限 + 发测试通知。
+- Host 半边注册一个 `notification` 会话投影：折叠每个会话的最后一次 `turn/end`，得到 `{ turn, reason, body, tools }`；再提供一个 `POST /dsh-notification-desktop/notify` 路由，用 WinRT 真正把 toast 弹出来。
+- Client 半边盯住 `ctx.sessions.list` 里这个投影的 `turn` 单调上升，决定这一轮要不要提醒（原因过滤、后台限制、总开关）；**桌面壳里把内容 POST 给宿主去弹，浏览器里才用页面自己的 `Notification`**。正文是该轮最后一段助手回复（Host 侧截到 400 字符，Client 侧再按设置截一次）。
+- 设置页在 **设置 → 完成提醒**：总开关、按结束原因过滤、仅后台提醒、通知常驻、正文长度、权限状态、发测试通知。
 
 投影是纯函数，Host 侧只注册、不碰会话日志以外的任何东西；Client 侧只用公开的 `sessions.list` 快照和 `settings.section` 槽位。
 
@@ -41,25 +41,31 @@ dsh plugin --profile desktop add https://github.com/<owner>/dsh-notification-des
 
 **1. 权限。** 桌面壳（`@deepseek-ai/dsh-desktop` 0.2.1-rc.2）给主窗口装的权限处理器，对**非 media** 权限是 `callback(true)` / `check → true`（见 `installMicrophonePermissions`）；被一律拒掉的是第三方登录窗口和 browser-use 的独立 partition。所以主窗口里 `Notification.permission` 实测就是 `granted`，不需要主进程加 IPC。
 
-**2. Windows 的 toast 呈现。** 权限给了、`new Notification()` 也成功了，**照样可能一个都不显示**。原因：Electron 在 Windows 上把 renderer 的通知交给 ToastNotificationManager，并按 AppUserModelID 归属；而桌面壳的 `main.js` 里 `setAppUserModelId` 出现次数是 **0**，Chromium 于是退回默认值 `electron.app.DeepSeek Harness`，同时开始菜单快捷方式的 `System.AppUserModelID` 是空串 —— 这个 AUMID 指向不到任何已注册应用，Windows 记账（`HKCU\...\Notifications\Settings\electron.app.DeepSeek Harness` 的 `LastNotificationAddedTime` 会更新）但**静默丢弃 toast**。
+**2. Windows 的 toast 呈现。** 权限给了、`new Notification()` 也返回成功，**照样可能一个都不显示**，而且是两层原因叠在一起：
 
-一次性修好：
+- **AUMID 没人注册。** Electron 在 Windows 上把 renderer 的通知按 AppUserModelID 归属；桌面壳的 `main.js` 里 `setAppUserModelId` 出现次数是 **0**，Chromium 退回默认值 `electron.app.DeepSeek Harness`，而开始菜单快捷方式的 `System.AppUserModelID` 是空串 —— 这个 AUMID 指向不到任何已注册应用。Windows 照样记账（`HKCU\...\Notifications\Settings\electron.app.DeepSeek Harness` 的 `LastNotificationAddedTime` 会更新）但**静默丢弃 toast**，通知中心里连留底都没有。
+- **即使 AUMID 补齐了，Chromium 这条 presenter 仍然不放行。** 同一个 AUMID 下用 WinRT 直接发就能显示，页面里 `new Notification()` 发就还是不显示。所以桌面端不让页面发，改成页面 POST 给宿主、宿主用 WinRT 发（`POST /dsh-notification-desktop/notify`）。
+
+两步都做上才算通：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\fix-toast-aumid.ps1
 # 撤销：加 -Remove
 ```
 
-它只写一个 `HKCU\Software\Classes\AppUserModelId\<AUMID>`（DisplayName + IconUri），不碰壳、不碰 asar、不碰快捷方式。实测注册后 toast 正常出现。
+它只写一个 `HKCU\Software\Classes\AppUserModelId\<AUMID>`（DisplayName + IconUri），不碰壳、不碰 asar、不碰快捷方式。
 
-> 自己写 PowerShell 探针时注意：`powershell -File` 执行**无 BOM 的 UTF-8** 脚本会按 GBK 解析，中文字面量会变成"锟斤拷"。这与插件无关（插件的中文是 JS 字符串经 Chromium 传给 WinRT，全程 UTF-16），纯粹是探针脚本自身的编码坑；探针脚本要么带 BOM，要么只用 ASCII。
+> **两个 PowerShell 坑（都实测踩过，都会静默失败）**
+>
+> 1. `[Type]::Static($x).Method()` 这种**在静态方法结果上继续调方法**的写法，Windows PowerShell 5.1 直接解析失败；配上 `stdio: 'ignore'` 就是"退出码 0、什么也没发生"。必须拆成 `$notifier = [Type]::Static($x)` 然后 `$notifier.Method()`。宿主侧现在会收集子进程 stdout/stderr 并写进 trace（`host-notify-result`），失败不再无声。
+> 2. `powershell -File` 执行**无 BOM 的 UTF-8** 脚本会按 GBK 解析，中文字面量变成"锟斤拷"。所以 `scripts/toast.ps1` 是纯 ASCII，用户可见文本一律通过 UTF-8 JSON 文件传进去。
 
 ## 已知边界
 
 - 不提醒「等你审批 / 等你回答」这类挂起交互（原因见上）。
-- 需要页面在跑：通知由页面里的 `Notification` 发出，页面关了就没有。
+- 页面必须在跑：判定发生在页面里，页面关了就没有；桌面端只是把"弹"这一步交给宿主。
 - `turn/end` 的 `forked` / `interrupted` 也会推进投影的 `turn`（这样客户端去重不会漏轮），但默认只在 `completed` / `error` 上弹。
-- 诊断用：Host 半边注册了 `GET/POST/DELETE /dsh-notification-desktop/trace`，客户端把每次闸门判断 POST 进去。排查"为什么不弹"直接 `Invoke-WebRequest http://127.0.0.1:<port>/dsh-notification-desktop/trace` 就能看到 `apply` / `seed` / `tick` / `skip` / `fire` / `deliver` 六类记录。
+- 诊断用：Host 半边注册了 `GET/POST/DELETE /dsh-notification-desktop/trace`，客户端把每次闸门判断 POST 进去。排查"为什么不弹"直接 `Invoke-WebRequest http://127.0.0.1:<port>/dsh-notification-desktop/trace` 就能看到 `apply` / `seed` / `tick` / `skip` / `fire` / `deliver` / `host-notify` / `host-notify-result` 记录 —— 一次真实排查就是靠这条链定位到上面两个坑的。
 
 ## 验证
 
