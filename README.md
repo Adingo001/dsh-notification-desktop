@@ -61,6 +61,22 @@ $env:ELECTRON_RUN_AS_NODE = 1
 
 索引用 DSH 自带的校验器验过：`@deepseek-ai/dsh-plugin-market-index` 的 `parseMarketIndex()`，`format: 1`、`engines.dsh = >=0.2.0 <0.3.0`（`0.2.1-rc.2` 落在范围内）。要让别的市场收录，把这份 `index.json` 的条目提给对应索引维护者即可——格式统一，条目可原样搬运。
 
+## 社区收录状态
+
+DSH 的「市场」不是一个中心，而是几套索引 + 一个 GitHub topic 的生态。当前状态：
+
+| 渠道 | 机制 | 状态 |
+| --- | --- | --- |
+| `bradeGithub/DSH-Plugins-Marketplace`（9500+ 插件，每 2 小时增量扫描） | 抓 GitHub topic `dsh-plugin` | ✅ 已打 topic，最迟 2 小时自动进索引，无需申请 |
+| `awesome-dsh-plugin`（社区精选，也是下面几个索引的数据源） | PR 一个 `data/plugins/<owner>__<repo>.yml` | ⏳ 条目已备好（`market/awesome-dsh-plugin.yml`），等仓库创建满 1 天：本仓库 `2026-10-21 09:16 UTC` 建，**`2026-10-22 17:16` 之后**可提 |
+| `dsh-market` / `dshmarket`（直接读 awesome 的 `plugins.json`） | 自动跟随 awesome | ⏳ 随上一条 |
+| `dsh-plugin-catalog`（jsDelivr 上的 format 1 索引，DSH Discover 官方入口） | 由 awesome 生成 | ⏳ 随上一条 |
+| 本仓库 `market/index.json` | 用户自己加索引源 | ✅ 已上线 |
+
+`awesome-dsh-plugin` 的硬门槛（照它的 `contributing.md`）：仓库要有真实代码、`package.json` 必须声明 `dsh.bundle`（只写 `dsh.client` 不算，会被打回）、仓库创建满 1 天。前两条本仓库满足。
+
+> 同分类里已有 `ztl0001/dsh-notify`（也是收尾提醒）。我们这条描述的差异化点写的是**实现事实**：0.2.x 的宿主投影 + 桌面端走宿主 WinRT 发（因为页面里的 `Notification` 在这套壳上会被系统静默丢弃），带按结束原因过滤的设置页。描述与代码对得上，这是那个列表审的核心。
+
 ## 桌面端：权限 ≠ 能够显示
 
 两件事必须分开看，实测都踩过：
