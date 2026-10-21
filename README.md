@@ -25,15 +25,20 @@ Host 半边的投影契约（`key` / `stateSchema` / `init` / `apply` / `wire` /
 
 ## 安装
 
-```powershell
-# 本地目录（开发中）
-dsh plugin --profile desktop add C:\path\to\dsh-notification-desktop
+**桌面端（DSH Desktop）**：`desktop` profile 由 Electron 应用独占，CLI 会拒绝写入（`profile "desktop" is managed exclusively by the Electron application`）。走应用自己的入口：
 
-# 或从 GitHub
-dsh plugin --profile desktop add https://github.com/<owner>/dsh-notification-desktop/archive/refs/heads/main.tar.gz
+- 侧栏 **插件 → 添加插件**，粘贴仓库地址 `https://github.com/Adingo001/dsh-notification-desktop`；
+- 或让 agent 用宿主内置的 plugin manager 装同一个地址（`plugin_manager` 的 `install_bundle`，`link:` 本地目录也行）。
+
+**Web / CLI profile**（`dsh web`、headless 等）：
+
+```bash
+dsh plugin --profile web add https://github.com/Adingo001/dsh-notification-desktop/archive/refs/heads/main.tar.gz
 ```
 
-装完刷新页面：设置左侧应出现 **完成提醒** 一页。
+装完刷新页面（桌面端要重启应用）：设置里应出现 **完成提醒** 一页。
+
+> Windows 上还要跑一次 `scripts/fix-toast-aumid.ps1`，否则 toast 会被系统静默丢弃 —— 见下面「权限 ≠ 能够显示」。
 
 ## 插件市场（Discover）
 
