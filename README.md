@@ -35,6 +35,27 @@ dsh plugin --profile desktop add https://github.com/<owner>/dsh-notification-des
 
 装完刷新页面：设置左侧应出现 **完成提醒** 一页。
 
+## 插件市场（Discover）
+
+`market/index.json` 是这个包的 **format 1 插件市场索引**，可以直接在 **插件 → Discover → 添加索引源** 里加：
+
+```
+https://raw.githubusercontent.com/Adingo001/dsh-notification-desktop/main/market/index.json
+```
+
+条目是 **commit 固定的 git 源**（`git+https://github.com/Adingo001/dsh-notification-desktop.git#<40 位 commit>`），不是移动分支——`marketInstallTarget()` 就是这么拼装的，版本号与 commit 一一对应。
+
+发新版本时重新生成：
+
+```powershell
+$env:ELECTRON_RUN_AS_NODE = 1
+& "D:\ai\DeepSeek Harness.exe" scripts\build-market-index.mjs
+```
+
+生成器保留索引里已有的历史版本，只把当前 `package.json` 的版本追加/替换进来，并把 `icon.svg` 复制到 `market/`（索引里的图标是相对引用，按索引 URL 解析）。
+
+索引用 DSH 自带的校验器验过：`@deepseek-ai/dsh-plugin-market-index` 的 `parseMarketIndex()`，`format: 1`、`engines.dsh = >=0.2.0 <0.3.0`（`0.2.1-rc.2` 落在范围内）。要让别的市场收录，把这份 `index.json` 的条目提给对应索引维护者即可——格式统一，条目可原样搬运。
+
 ## 桌面端：权限 ≠ 能够显示
 
 两件事必须分开看，实测都踩过：
