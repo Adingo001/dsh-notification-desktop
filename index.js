@@ -9,8 +9,13 @@
  * Ported to DeepSeek Harness 0.2.x: `ctx.sessionProjections.register` keeps the
  * same definition shape (key / stateSchema / init / apply / wire / stateVersion)
  * as 0.1.x, so only the wiring is rewritten here.
+ *
+ * No `zod` dependency: the seam only ever calls `schema.parse(value)` on the
+ * state and wire schemas (see `@deepseek-ai/dsh-session-projection`), so this
+ * package ships structural validators with the same call shape. That keeps the
+ * bundle dependency-free, which matters because a profile links a local
+ * checkout without installing its dependencies.
  */
-import { z } from 'zod'
 
 /** Cordis plugin name — also the client bundle id. */
 export const name = 'dsh-notification-desktop'
@@ -24,28 +29,50 @@ const MAX_BODY_CHARS = 400
 /** The empty-log view: a session with no completed turn yet. */
 const EMPTY_VIEW = Object.freeze({ turn: 0, reason: '', body: '', tools: Object.freeze([]) })
 
-const viewSchema = z
-  .object({
-    turn: z.number().int().nonnegative(),
-    reason: z.string(),
-    body: z.string(),
-    tools: z.array(z.string()),
-  })
-  .strict()
+/**
+ * Wrap one validator in the schema shape the projection seam consumes.
+ * @param {(value: unknown) => void} validate - throws on an invalid value.
+ * @returns {{ parse<T>(value: T): T }} a schema whose `parse` validates and returns the value.
+ */
+function shape(validate) {
+  return {
+    parse(value) {
+      validate(value)
+      return value
+    },
+  }
+}
 
-const stateSchema = z
-  .object({
-    open: z
-      .object({
-        turn: z.number().int().nonnegative(),
-        text: z.string(),
-        tools: z.array(z.string()),
-      })
-      .strict()
-      .nullable(),
-    last: viewSchema.nullable(),
-  })
-  .strict()
+function fail(message) {
+  throw new TypeError(`dsh-notification-desktop: ${message}`)
+}
+
+function assertView(value) {
+  if (value === null || typeof value !== 'object') fail('view must be an object')
+  if (!Number.isInteger(value.turn) || value.turn < 0) fail('view.turn must be a non-negative integer')
+  if (typeof value.reason !== 'string') fail('view.reason must be a string')
+  if (typeof value.body !== 'string') fail('view.body must be a string')
+  if (!Array.isArray(value.tools) || value.tools.some(tool => typeof tool !== 'string')) {
+    fail('view.tools must be a string array')
+  }
+}
+
+function assertState(state) {
+  if (state === null || typeof state !== 'object') fail('state must be an object')
+  const open = state.open
+  if (open !== null) {
+    if (typeof open !== 'object') fail('state.open must be an object or null')
+    if (!Number.isInteger(open.turn) || open.turn < 0) fail('state.open.turn must be a non-negative integer')
+    if (typeof open.text !== 'string') fail('state.open.text must be a string')
+    if (!Array.isArray(open.tools) || open.tools.some(tool => typeof tool !== 'string')) {
+      fail('state.open.tools must be a string array')
+    }
+  }
+  if (state.last !== null) assertView(state.last)
+}
+
+const stateSchema = shape(assertState)
+const viewSchema = shape(assertView)
 
 /**
  * Bound one reply to the body budget, ellipsizing on overflow.
