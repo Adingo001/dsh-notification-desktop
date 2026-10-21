@@ -1,0 +1,93 @@
+{
+  "format": 1,
+  "title": {
+    "en": "dsh-notification-desktop",
+    "zh": "完成提醒"
+  },
+  "description": {
+    "en": "Turn-finished desktop notifications for DeepSeek Harness 0.2.x, with a settings page.",
+    "zh": "DeepSeek Harness 0.2.x 的「一轮跑完就弹通知」插件，带设置页。"
+  },
+  "metadata": {
+    "categories": {
+      "notifications": {
+        "title": {
+          "en": "Notifications",
+          "zh": "通知提醒"
+        }
+      }
+    },
+    "labels": {
+      "windows": {
+        "title": {
+          "en": "Windows",
+          "zh": "Windows"
+        }
+      },
+      "desktop": {
+        "title": {
+          "en": "Desktop shell",
+          "zh": "桌面端"
+        }
+      },
+      "zeroDependency": {
+        "title": {
+          "en": "No dependencies",
+          "zh": "零依赖"
+        }
+      }
+    },
+    "sortKeys": {}
+  },
+  "plugins": [
+    {
+      "name": "dsh-notification-desktop",
+      "title": {
+        "en": "Completion reminders",
+        "zh": "完成提醒"
+      },
+      "description": {
+        "en": "Posts a desktop notification when a session finishes a turn, filtered by how it ended. Host projection plus a WinRT toast on the desktop shell.",
+        "zh": "会话跑完一轮就弹系统通知，可按结束原因过滤。Host 侧会话投影 + 桌面端 WinRT toast。"
+      },
+      "icon": "icon.svg",
+      "author": "Adingo001",
+      "homepage": "https://github.com/Adingo001/dsh-notification-desktop",
+      "repository": {
+        "url": "https://github.com/Adingo001/dsh-notification-desktop"
+      },
+      "metadata": {
+        "category": "notifications",
+        "keywords": [
+          "notification",
+          "toast",
+          "reminder",
+          "turn",
+          "desktop",
+          "windows",
+          "通知",
+          "提醒"
+        ],
+        "labels": [
+          "windows",
+          "desktop",
+          "zeroDependency"
+        ]
+      },
+      "versions": [
+        {
+          "version": "0.2.0",
+          "publishTimestamp": 1792590300,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/Adingo001/dsh-notification-desktop",
+            "commit": "6807fb69729473c46cbf20d461b2544935c350e9"
+          },
+          "engines": {
+            "dsh": ">=0.2.0 <0.3.0"
+          }
+        }
+      ]
+    }
+  ]
+}
