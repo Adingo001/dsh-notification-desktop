@@ -95,7 +95,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\fix-toast-aumid.ps
 # 撤销：加 -Remove
 ```
 
-它只写一个 `HKCU\Software\Classes\AppUserModelId\<AUMID>`（DisplayName + IconUri），不碰壳、不碰 asar、不碰快捷方式。
+它写两个键，都不碰壳、不碰 asar、不碰快捷方式：
+
+- `HKCU\Software\Classes\AppUserModelId\<AUMID>`（DisplayName + IconUri）—— 让 Windows 认这个 AUMID。
+- `HKCU\Software\Classes\dshnotify`（URL Protocol + handler）—— **点通知能把窗口拉回前台**。
+
+### 点通知回到前台
+
+toast 带 `activationType="protocol" launch="dshnotify:focus"`，点它时 Windows 跑上面注册的 handler → `scripts/focus.ps1` 找到 `DeepSeek Harness` 的主窗口，必要时 `SW_RESTORE`，再用 `AttachThreadInput` + `SetForegroundWindow` 把它提到前台（Windows 默认不让后台进程抢前台，必须借前台线程的输入队列）。
+
+为什么不用 `activationType="foreground"`：那需要给 AUMID 注册一个 `ToastActivatorCLSID` COM 服务器（还要处理 `-ToastActivated` 命令行），而桌面壳不提供；协议激活只需要一个 HKCU 注册表项。
+
+handler 里写的是**本 checkout 的绝对路径**，所以挪动插件目录后要重跑一次 `fix-toast-aumid.ps1`。
 
 > **两个 PowerShell 坑（都实测踩过，都会静默失败）**
 >

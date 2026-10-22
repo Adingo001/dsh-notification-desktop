@@ -17,7 +17,11 @@ function Esc([string]$value) {
 
 $title = Esc([string]$json.title)
 $body = Esc([string]$json.body)
-$xmlText = "<toast duration='long'><visual><binding template='ToastGeneric'><text>$title</text><text>$body</text></binding></visual></toast>"
+# activationType="protocol" + launch: clicking the toast runs the registered
+# `dshnotify:` handler (scripts\fix-toast-aumid.ps1 registers it), which raises
+# the app window. Foreground activation would need a registered COM activator
+# (ToastActivatorCLSID), and this shell never sets one.
+$xmlText = "<toast launch='dshnotify:focus' activationType='protocol' duration='long'><visual><binding template='ToastGeneric'><text>$title</text><text>$body</text></binding></visual></toast>"
 
 [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
 [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
