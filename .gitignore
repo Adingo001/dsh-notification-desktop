@@ -2,3 +2,7 @@ node_modules/
 pnpm-lock.yaml
 *.log
 .DS_Store
+
+scripts/focus-dsh.exe
+scripts/focus-dsh.vbs
+

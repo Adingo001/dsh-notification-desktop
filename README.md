@@ -102,7 +102,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\fix-toast-aumid.ps
 
 ### 点通知回到前台
 
-toast 带 `activationType="protocol" launch="dshnotify:focus"`，点它时 Windows 跑上面注册的 handler → `scripts/focus.ps1` 找到 `DeepSeek Harness` 的主窗口，必要时 `SW_RESTORE`，再用 `AttachThreadInput` + `SetForegroundWindow` 把它提到前台（Windows 默认不让后台进程抢前台，必须借前台线程的输入队列）。
+toast 带 `activationType="protocol" launch="dshnotify:focus"`，点它时 Windows 跑上面注册的 handler，把 `DeepSeek Harness` 的主窗口提到前台。抢前台要绕开 Windows 的前台锁，所以是三级降级、每级都校验：
+
+1. `AttachThreadInput` 借前台线程的输入队列 → `BringWindowToTop` → `SetForegroundWindow`
+2. `SwitchToThisWindow`
+3. `SW_MINIMIZE` → `SW_RESTORE`（还原的窗口会拿到激活权）→ 再 `SetForegroundWindow`
+
+**handler 不能闪黑框。** 控制台程序（`powershell.exe`）在能隐藏自己之前就已经被加载器创建了控制台窗口，所以 `-WindowStyle Hidden` 也挡不住闪一下。因此：
+
+- 有 C# 编译器时，`fix-toast-aumid.ps1` 把 `scripts/focus-dsh.cs` 编成 **`scripts/focus-dsh.exe`**（`/target:winexe` = GUI 子系统，压根没有控制台），协议直接指向它；
+- 没有编译器时退到 **`wscript.exe`**（GUI 宿主）跑 `scripts/focus.ps1` 的隐藏 PowerShell —— 同样不闪。
+
+两个产物都在 `.gitignore` 里（构建物不入库），换机器装的时候由注册脚本现编。
 
 为什么不用 `activationType="foreground"`：那需要给 AUMID 注册一个 `ToastActivatorCLSID` COM 服务器（还要处理 `-ToastActivated` 命令行），而桌面壳不提供；协议激活只需要一个 HKCU 注册表项。
 

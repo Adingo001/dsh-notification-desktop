@@ -49,7 +49,33 @@ if (Test-Path $IconPath) {
 # The protocol handler points at this checkout's focus.ps1, so re-run this
 # script after moving the plugin directory.
 if (-not (Test-Path $focusScript)) { throw "focus script not found: $focusScript" }
-$command = 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}" "%1"' -f $focusScript
+# The handler must not flash a console window. A console program (powershell.exe)
+# always creates one before it can hide itself, so prefer the compiled
+# windowless launcher; without a C# compiler, fall back to wscript (a GUI host)
+# running the PowerShell helper hidden.
+$launcher = Join-Path $PSScriptRoot 'focus-dsh.exe'
+$launcherSource = Join-Path $PSScriptRoot 'focus-dsh.cs'
+$vbsLauncher = Join-Path $PSScriptRoot 'focus-dsh.vbs'
+$compiler = @(
+  Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+  Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe'
+) | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+$command = $null
+if ($null -ne $compiler -and (Test-Path $launcherSource)) {
+  & $compiler /nologo /target:winexe /optimize+ /out:$launcher $launcherSource 2>&1 | Out-Null
+  if (Test-Path $launcher) {
+    $command = '"{0}" "%1"' -f $launcher
+    Write-Host "launcher   : compiled $launcher"
+  }
+}
+if ($null -eq $command) {
+  $vbs = 'CreateObject("WScript.Shell").Run "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{0}"" ""%1""", 0, False' -f $focusScript
+  Set-Content -Path $vbsLauncher -Value $vbs -Encoding ASCII
+  $command = 'wscript.exe //nologo "{0}" "%1"' -f $vbsLauncher
+  Write-Host "launcher   : no C# compiler found; using wscript -> focus.ps1"
+}
+
 New-Item -Path "$protocolKey\shell\open\command" -Force | Out-Null
 Set-Item -Path $protocolKey -Value 'URL:DeepSeek Harness notification focus'
 Set-ItemProperty -Path $protocolKey -Name 'URL Protocol' -Value ''
