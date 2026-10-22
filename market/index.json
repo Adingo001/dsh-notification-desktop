@@ -98,6 +98,18 @@
           "engines": {
             "dsh": ">=0.2.0 <0.3.0"
           }
+        },
+        {
+          "version": "0.3.1",
+          "publishTimestamp": 1792656464,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/Adingo001/dsh-notification-desktop",
+            "commit": "3328c2b9e704b79a97c5a6886ebbf85fff937144"
+          },
+          "engines": {
+            "dsh": ">=0.2.0 <0.3.0"
+          }
         }
       ]
     }
