@@ -346,6 +346,9 @@ window.__ModuleLoader__.load({
           observed.set(id, {
             turn: turnOf(row),
             hydrated: projection !== undefined && projection !== null,
+            // Rows present at seed time may carry history behind them; a row
+            // that shows up later is a session this page watched from birth.
+            fromSeed: true,
           })
         }
         graceUntil = Date.now() + GRACE_MS
@@ -409,12 +412,22 @@ window.__ModuleLoader__.load({
           const hydrated = projection !== undefined && projection !== null
           const turn = turnOf(row)
           const previous = observed.get(id)
-          observed.set(id, { turn, hydrated })
+          if (!hydrated) {
+            // A missing projection is a transient resync state. It must never
+            // overwrite a known baseline with turn 0, or the history that comes
+            // back would look like a completion.
+            if (previous === undefined) observed.set(id, { turn, hydrated: false, fromSeed: false })
+            continue
+          }
+          observed.set(id, { turn, hydrated: true, fromSeed: false })
           const before = previous === undefined ? undefined : previous.turn
           if (before !== undefined && turn !== before) changed.push({ id, from: before, to: turn })
-          // An unhydrated baseline is history, not a completion: a projection
-          // arriving for the first time records the turn without notifying.
-          if (previous === undefined || !previous.hydrated || turn <= before) continue
+          if (previous === undefined) continue
+          // A row that was seeded without its projection only *learns* its turn
+          // when history hydrates: that is not a completion. A session born
+          // after the seed is new, so its first completion still notifies.
+          if (previous.fromSeed && !previous.hydrated) continue
+          if (turn <= before) continue
           if (Date.now() < graceUntil) {
             report({ kind: 'skip', id, turn, previous: before, skip: 'resync-grace' })
             continue
