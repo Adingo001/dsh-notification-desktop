@@ -327,11 +327,28 @@ window.__ModuleLoader__.load({
 
       const observed = new Map()
 
+      // A reconnect (sleep, unlock, WS reset) rebuilds the session list before
+      // the projections hydrate. Baselining those rows at "turn 0" made every
+      // session look freshly completed once its history arrived, which fired a
+      // toast per session on every unlock. Entries therefore carry whether the
+      // projection was present when they were recorded, and a seed opens a
+      // short window in which nothing may fire at all.
+      const GRACE_MS = 5000
+      let graceUntil = 0
+
       const seed = () => {
         const state = list.getSnapshot()
         observed.clear()
         if (state === undefined || !Array.isArray(state.ids)) return
-        for (const id of state.ids) observed.set(id, turnOf(state.byId?.[id]))
+        for (const id of state.ids) {
+          const row = state.byId?.[id]
+          const projection = row?.projectionValues?.notification
+          observed.set(id, {
+            turn: turnOf(row),
+            hydrated: projection !== undefined && projection !== null,
+          })
+        }
+        graceUntil = Date.now() + GRACE_MS
         report({ kind: 'seed', phase: state.phase, ids: state.ids.length, baselines: [...observed.entries()] })
       }
 
@@ -389,41 +406,49 @@ window.__ModuleLoader__.load({
           const row = state.byId?.[id]
           if (row === undefined || row === null) continue
           const projection = row.projectionValues?.notification
+          const hydrated = projection !== undefined && projection !== null
           const turn = turnOf(row)
           const previous = observed.get(id)
-          observed.set(id, turn)
-          if (previous !== undefined && turn !== previous) changed.push({ id, from: previous, to: turn })
-          if (previous === undefined || turn <= previous) continue
+          observed.set(id, { turn, hydrated })
+          const before = previous === undefined ? undefined : previous.turn
+          if (before !== undefined && turn !== before) changed.push({ id, from: before, to: turn })
+          // An unhydrated baseline is history, not a completion: a projection
+          // arriving for the first time records the turn without notifying.
+          if (previous === undefined || !previous.hydrated || turn <= before) continue
+          if (Date.now() < graceUntil) {
+            report({ kind: 'skip', id, turn, previous: before, skip: 'resync-grace' })
+            continue
+          }
           if (!settings.enabled) {
-            report({ kind: 'skip', id, turn, previous, skip: 'disabled' })
+            report({ kind: 'skip', id, turn, previous: before, skip: 'disabled' })
             continue
           }
           if (api === undefined && !isDesktopShell()) {
-            report({ kind: 'skip', id, turn, previous, skip: 'no-api' })
+            report({ kind: 'skip', id, turn, previous: before, skip: 'no-api' })
             continue
           }
           if (projection === undefined || projection === null) {
-            report({ kind: 'skip', id, turn, previous, skip: 'no-projection' })
+            report({ kind: 'skip', id, turn, previous: before, skip: 'no-projection' })
             continue
           }
           const flag = REASON_FLAG[projection.reason]
           if (flag === undefined) {
-            report({ kind: 'skip', id, turn, previous, skip: 'reason-not-mapped', reason: projection.reason })
+            report({ kind: 'skip', id, turn, previous: before, skip: 'reason-not-mapped', reason: projection.reason })
             continue
           }
           if (settings[flag] !== true) {
-            report({ kind: 'skip', id, turn, previous, skip: 'reason-off', reason: projection.reason })
+            report({ kind: 'skip', id, turn, previous: before, skip: 'reason-off', reason: projection.reason })
             continue
           }
           if (settings.backgroundOnly && !document.hidden && isMainView(row)) {
-            report({ kind: 'skip', id, turn, previous, skip: 'background-only', hidden: document.hidden, main: isMainView(row) })
+            report({ kind: 'skip', id, turn, previous: before, skip: 'background-only', hidden: document.hidden, main: isMainView(row) })
             continue
           }
           report({
             kind: 'fire',
             id,
             turn,
-            previous,
+            previous: before,
             reason: projection.reason,
             hidden: document.hidden,
             main: isMainView(row),

@@ -1,6 +1,6 @@
 {
   "name": "dsh-notification-desktop",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Turn-finished desktop notifications for DeepSeek Harness 0.2.x (host session projection + browser Notification, with a settings section).",
   "license": "MIT",
   "type": "module",
